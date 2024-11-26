@@ -1,22 +1,11 @@
 library(httr)
 library(rvest)
-library(tidyverse)
-library(jsonlite)
-library(progress)
-library(stringr)
-
-#### Opgave 1.1 ####
-# URL til bilbasen - søger efter BMW med diesel
-startlink <- "https://www.bilbasen.dk/brugt/bil/bmw?fuel=3&includeengroscvr=true&includeleasing=false&page="
-
-# Definer User-Agent
+startlink <- "https://envs2.au.dk/Luftdata/Presentation/table/Aarhus/AARH3"
 UserA <- "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
 
 readRenviron(".Renviron")
 cookie <- Sys.getenv("cookie")
-
-# Send GET-request med User-Agent
 rawres <- GET(
   url = startlink,
   add_headers(
@@ -24,290 +13,136 @@ rawres <- GET(
     `Accept-Language` = "en-US,en;q=0.9",
     `Accept-Encoding` = "gzip, deflate, br",
     `Connection` = "keep-alive",
-    `Accept` = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    `Cookie` = cookie
-  )
-)
-print(rawres$status_code)
-
-
-# Hent HTML-indholdet fra svaret
-rawcontent <- httr::content(rawres, as = "text", encoding = "UTF-8")
-page <- read_html(rawcontent)
-
-# Ekstraher biloplysninger fra siden
-carlist <- page %>% html_elements("article")
-
-# Definer CSS-selectors til at hente data
-ptag <- ".Listing_price__6B3kE"
-makertag <- ".Listing_makeModel__7yqgs"
-modalnametag <- "h3" # Kun udtage den specifikke bilmodel (bliver relevant ved den tyske scrape)
-bildetails <- ".ListingDetails_listItem___omDg"
-bildescripts <- ".Listing_description__sCNNM"
-billocation <- ".Listing_location__nKGQz"
-prop <- ".Listing_properties___ptWv"
-
-# Opret en dataframe til at gemme bildata
-bilbasenWebScrape <- data.frame(matrix(data = NA, nrow = 0, ncol = 9))
-ColnamesCars <- c("Pris", "Bilmodel", "Specific Model", "Detaljer", "Beskrivelse", "Lokation", "Link", "Bil-ID", "Scrape-Dato")
-colnames(bilbasenWebScrape) <- ColnamesCars
-
-
-# Extract all spans on the page
-last_page <- page %>% html_elements('span[data-e2e="pagination-total"]') %>% html_text(trim = TRUE) %>% as.numeric()
-#bilbasenWebScrape <- readRDS("bilbasenWebScrape_2024-11-23-22-35.rds")
-
-#### Webscrape Loop #### 
-for (i in 1:last_page) { # Sleep + startlink til lastpage + headers
-  loopurl <- paste0(startlink,i)
-  Sys.sleep(runif(1, min = 0.5, max = 2))
-  rawres <- GET(
-    url = loopurl,
-    add_headers(
-      `User-Agent` = UserA,
-      `Accept-Language` = "en-US,en;q=0.9",
-      `Accept-Encoding` = "gzip, deflate, br",
-      `Connection` = "keep-alive",
-      `Accept` = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-      `Cookie` = cookie 
-    )
-  )
-  rawcontent <- httr::content(rawres, as = "text", encoding = "UTF-8")
-  page <- read_html(rawcontent)
-  carlist <- page %>% html_elements("article")
-  for (car in carlist) { # Webscrape
-    tryCatch({
-      pris <- car %>% html_element(ptag) %>% html_text(trim = TRUE)
-      model <- car %>% html_element(makertag) %>% html_text(trim = TRUE)
-      specificmodel <- car %>% html_element(modalnametag) %>% html_text(trim = TRUE)
-      details <- car %>% html_elements(bildetails) %>% html_text(trim = TRUE) %>% paste0(collapse = "_")
-      description <- car %>% html_element(bildescripts) %>% html_text(trim = TRUE)
-      #### Opgave 1.2 Rens data ####
-      description <- gsub("\n\\d[0-9]*","",description) # Fjerner HTML/CSS page break
-      description <- gsub("[^A-Za-z0-9,. æøåÆØÅ]", "", description) # Fjerner unwanted chars via ^ (basically en NOT)
-      description <- gsub("\\s+", " ", description) # Samler multiple spaces med 1
-      description <- gsub("\\s*\\.\\s*\\.\\s*", ". ", description) # Samler multiple . (selv hvis der er space) til 1
-      description <- gsub("^\\s*[0-9]*\\.\\s*", "", description) # fjerner start med tal eller space
-      description <- gsub("^\\s+", "", description)
-      location <- car %>% html_element(billocation) %>% html_text(trim = TRUE)
-      link <- car %>% html_element("a") %>% html_attr("href")
-      carid <- link %>% str_extract("[0-9]{7}")
-      property <- car %>% html_element(prop) %>% html_text(trim=T)
-      
-      # Opret en midlertidig dataframe og tilføj den til den samlede dataframe
-      tmpDF <- data.frame(pris, model, specificmodel, details, property, description, location, link, carid, Sys.time(), stringsAsFactors = FALSE)
-      bilbasenWebScrape <- rbind(bilbasenWebScrape, tmpDF)
-    },
-    error = function(cond) {
-      print(cond)
-    })
-    current_row_count <- nrow(bilbasenWebScrape)
-    Loop <- paste0("Loopet har nu fanget: ",current_row_count," biler, ved loop: ",i,", klokken: ",format(Sys.time(),"%Y-%m-%d-%H-%M"))
-    print(Loop)
-  }
-  if (i==last_page){ #Bruges til at lave output i console
-    count <- as.numeric(n_distinct(bilbasenWebScrape$carid)) # dplyr pakke bruges til n_distinct
-    if (nrow(bilbasenWebScrape)!=count) {
-      IDcountDupe <- paste0("ID passer ikke, der er: ", nrow(bilbasenWebScrape)-count,"dublikationer")
-      print(IDcount)
-    } else if (nrow(bilbasenWebScrape) == count) { # Sker kun, når loopet er færdigt
-      IDcount <- paste0("Der er ingen dublikationer i alle: ", count, " biler")
-      print(IDcount)
-      # Gemmer filsen som en RDS
-      RDSname <- paste0("bilbasenWebScrape_",format(Sys.time(), "%Y-%m-%d-%H-%M"),".rds")
-      saveRDS(bilbasenWebScrape, RDSname)
-      RDSsave <- paste0("Gemmer den scrapede data i filen: ",RDSname)
-      print(RDSsave)
-      # Laver en kolonne med den specifikke bilmoden, bliver relevant til det tyske loop
-      bilbasenWebScrape$specificmodel <- sub(".*? ", "", bilbasenWebScrape$specificmodel) #Fjerne BMW fra kolonnen
-      bilmodeller <- data.frame(unique(bilbasenWebScrape$specificmodel))
-    }
-  }
-} 
-bilbasenWebScrape$specificmodel <- sub(".*? ", "", bilbasenWebScrape$specificmodel) #Fjerne BMW fra kolonnen
-bilmodeller <- as.list(unique(bilbasenWebScrape$specificmodel))
-
-###########################################################
-############################################################
-##   Lav det, så man evt. selv kan vælge mærke, type osv  ##
-##   I url så er alle biler = bil                         ##
-############################################################
-############################################################
-
-options(max.print = 10000) # ændre vores max print til 10000, så vi kan gøre hele nedestående linje
-count(unique(bilbasenWebScrape,vars=c(carid,feature)),vars=carid) #891 unikke bil ID, betydende no dupes
-
-count <- as.numeric(n_distinct(bilbasenWebScrape$carid)) # Samme men med dplyr
-
-#### Opgave 1.2 ####
-#description <- page %>% html_element(bildescripts) %>% html_text(trim = TRUE)
-#description <- gsub("\n\\d[0-9]*","",description) # Fjerner HTML/CSS page break
-#description <- gsub("[^A-Za-z0-9,. ]", "", description). # Fjerner unwanted chars via ^ (basically en NOT)
-#description <- gsub("\\s+", " ", description) # Samler multiple spaces med 1
-#description <- gsub("\\s*\\.\\s*\\.\\s*", ". ", description) # Samler multiple . (selv hvis der er space) til 1
-
-#### Tyske hjemmesider ####
-# 1. https://www.mobile.de/
-# 2. https://www.autoscout24.de/
-# 3. OOYYO.com
-# 4. AutoUncle.de
-
-
-# https://suchen.mobile.de/fahrzeuge/search.html?dam=false&ft=ELECTRICITY&isSearchRequest=true&ms=3500%3B%3B%3B&pageNumber=1&ref=srpNextPage&refId=bc536ead-c5ad-10c7-3f22-6b23e45d7bf4&s=Car&sb=rel&vc=Car
-
-# https://www.autoscout24.de/lst/bmw?atype=C&cy=D&damaged_listing=exclude&desc=0&fuel=E&ocs_listing=include&page=2&powertype=kw&search_id=1pfsvl8rerg&sort=standard&source=listpage_pagination&ustate=N%2CU
-
-#### Webscrape Tyskland ####
-# Lave et loop der macther til biler i Bilmodeller df
-UserT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0"
-Tstartlink <- paste0("https://www.autoscout24.de/lst/bmw?atype=C&cy=D&damaged_listing=exclude&desc=0&fuel=E&ocs_listing=include&page=","","&powertype=kw&search_id=1pfsvl8rerg&sort=standard&source=listpage_pagination&ustate=N%2CU")
-Trawres <- GET(
-  url = Tstartlink,
-  add_headers(
-    `User-Agent` = UserT#,
-    #`Accept-Language` = "en-US,en;q=0.9",
-    #`Accept-Encoding` = "gzip, deflate, br",
-    #`Connection` = "keep-alive",
-    #`Accept` = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    `Accept` = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"#,
     #`Cookie` = cookie
   )
 )
-print(Trawres$status_code)
-Trawcontent <- httr::content(Trawres, as = "text", encoding = "UTF-8")
-Tpage <- read_html(Trawcontent)
-Tcarlist <- Tpage %>% html_elements("article")
+print(rawres$status_code)
+rawcontent <- httr::content(rawres, as = "text", encoding = "UTF-8")
+page <- read_html(rawcontent)
+cat(rawcontent) # Se opstillin, her kan det ses at tablet er indlæst dynamisk gennem Java
 
-# CSS selectors til nede super kreative tags
-Tpricetag <- "p.Price_price__APlgs.PriceAndSeals_current_price__ykUpx"
-Tnametag <- "h2" 
-Tmilagetag <- 'span[data-testid="VehicleDetails-mileage_road"]'
-Tcalendertag <- 'span[data-testid="VehicleDetails-calendar"]'
-Tgastag <- 'span[data-testid="VehicleDetails-gas_pump"]'
-Tspeedometertag <- 'span[data-testid="VehicleDetails-speedometer"]'
-Tdistancetag <- 'span[data-testid="VehicleDetails-distance"]'
-Tlightningtag <- 'span[data-testid="VehicleDetails-lightning_bolt"]'
-Tleaftag <- 'span[data-testid="VehicleDetails-leaf"]'
-Tsellertag <- 'span[data-testid="sellerinfo-company-name"]'
-Tratingtag <- 'span.BlackStars_wrapper__stcae'
-Timagetag <- '.img.NewGallery_img__cXZQC'
+#### Århus bandegårdsgade ####
+# URL for tabellen, som indlæses i JS
+# https://imgur.com/a/IXWlTUE URL
+# https://imgur.com/a/4lrwu4F RESPONSE
+js_url <- "https://envs2.au.dk/Luftdata/Presentation/table/MainTable/Aarhus/AARH3"
+
+# Finder den specifikke __RequestVerificationToken, som skal bruges for at godkende vores POST (indlæsning af tabel)
+# https://imgur.com/a/Ieeeyyn
+token <- read_html(rawcontent) %>%
+  html_element("input[name='__RequestVerificationToken']") %>% 
+  html_attr("value") # Trækker bare værdierne ud
+
+# Java Script POST request
+jsPOST <- POST(
+  url = js_url,
+  add_headers(
+    `User-Agent` = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+  ),
+  body = list(`__RequestVerificationToken` = token), # skal bruges, for at indlæse POST
+  encode = "form"
+)
+
+# henter HTML
+table_html <- content(jsPOST, as = "text", encoding = "UTF-8")
+table_page <- read_html(table_html)
+
+# Scraper tabbels rows (hver <tr> - table row)
+rows <- table_page %>% html_elements("tr")
+table_data <- rows %>%
+  html_elements("td") %>% # td = table data per table row
+  html_text(trim = TRUE)
+# Snupper også lige hurtigt headeren 
+header <- table_page %>% html_elements("th") %>% html_text(trim = T)
+header_amount <- as.numeric(length(header)) # bruges til at finde ud af, hvor mange kolonner skal laves i data frame
+
+# laver det til dataframe og renser data
+unlist <- unlist(table_data)
+Aarhus <- as.data.frame(matrix(data = unlist, ncol = header_amount, byrow = T))
+colnames(Aarhus) <- header
+str(Aarhus) # alle er chr
+Aarhus[, 2:header_amount] <- lapply(Aarhus[, 2:header_amount], function(x) as.numeric(gsub(",", ".", x))) 
+#alternativt kan man ungå lapply/function ved at lave gsub for hver kolonne
+str(Aarhus)
+
+#### Risø ####
+ri_link <- "https://envs2.au.dk/Luftdata/Presentation/table/Rural/RISOE"
+rirawres <- GET(
+  url = ri_link,
+  add_headers(`User Agent`= UserA))
+print(rirawres$status_code)
+ri_content <- httr::content(rirawres, as = "text", encoding = "UTF-8")
+ri_js <- "https://envs2.au.dk/Luftdata/Presentation/table/MainTable/Rural/RISOE"
+ri_token <- read_html(ri_content) %>% html_elements("input[name=__RequestVerificationToken]") %>% html_attr("value")
+
+ri_post <- POST(
+  url=ri_js,
+  add_headers(`User Agent` = UserA),
+  body = list(`__RequestVerificationToken` = token)
+)
+
+ritable_html <- content(ri_post, as = "text", encoding = "UTF-8")
+ri_table <- read_html(ritable_html)
+
+ri_rows <- ri_table %>% html_elements("tr")
+ri_table_data <- ri_rows %>%
+  html_elements("td") %>%
+  html_text(trim = TRUE)
+ri_header <- ri_table %>% html_elements("th") %>% html_text(trim = T)
+ri_header_amount <- as.numeric(length(ri_header))
+ri_unlist <- unlist(ri_table_data)
+Risø <- as.data.frame(matrix(data = ri_unlist, ncol = ri_header_amount, byrow = T))
+colnames(Risø) <- ri_header
+Risø[, 2:ri_header_amount] <- lapply(Risø[, 2:ri_header_amount], function(x) as.numeric(gsub(",", ".", x))) 
 
 
-Tyskebiler <- data.frame(matrix(data = NA, nrow = 0, ncol = 13))
-ColnamesTysk <- c("Pris", "Navn", "Milage", "Calender", "Type", "Speedometer", "Distence", "Lightning", "Leaf", "Seller", "SellerRating", "Image", "Scrape-date")
-colnames(Tyskebiler) <- ColnamesTysk
+#### Anholt ####
+an_link <- "https://envs2.au.dk/Luftdata/Presentation/table/Rural/ANHO"
+anrawres <- GET(url = an_link, add_headers(`User Agent`= UserA))
+print(anrawres$status_code)
+an_content <- httr::content(anrawres,as = "text", encoding = "UTF-8")
+an_js <- "https://envs2.au.dk/Luftdata/Presentation/table/MainTable/Rural/ANHO"
+an_token <- read_html(an_content) %>% html_element("input[name=__RequestVerificationToken]") %>% html_attr("value")
+an_post <- POST(
+  url = an_js,
+  add_headers(`User Agent`= UserA),
+  body = list(`__RequestVerificationToken` = token))
 
+an_table_html <- content(an_post, as = "text", encoding = "UTF-8")
+an_table <- read_html(an_table_html)
 
-#Tlast_page <- Tpage %>%
-#  html_elements("li.pagination-item button") %>%
-#  html_text(trim = TRUE) %>%
-#  tail(1) %>% as.numeric()
-
-# Vælge en MakeModel, for at komme rundt om 20 maks sider 
-# scrollable-list
-for (model in bilmodeller) { # Looper i gennem modellisten, og indsætter i linket
-  Modelscrape <- paste0("Scraper nu for model: ", model)
-  print(Modelscrape)
-  Tlast_page <- NULL
-  modellink <- paste0("https://www.autoscout24.de/lst/bmw/", model, "/ft_elektro?atype=C&cy=D&damaged_listing=exclude&desc=0&ocs_listing=include&page=")
-  Trawres <- GET(
-    url = modellink,
-    add_headers(`User-Agent` = UserT)
-  )
-  if (Trawres$status_code != 200) { # Mindre kode til at tjekke status 
-    print(paste("Fejl i anmodning, statuskode:", Trawres$status_code))
-  }
-  Trawcontent <- httr::content(Trawres, as = "text", encoding = "UTF-8")
-  Tpage <- read_html(Trawcontent)
-  Tlast_page <- Tpage %>%
-    html_elements("li.pagination-item button") %>%
-    html_text(trim = TRUE) %>%
-    tail(1) %>% as.numeric()
-  Ttotalsider <- paste0("Total antal sider for denne model: ", Tlast_page)
-  print(Ttotalsider)
-  modellink <- paste0("https://www.autoscout24.de/lst/bmw/", model, "/ft_elektro?atype=C&cy=D&damaged_listing=exclude&desc=0&ocs_listing=include&page=")
-  for (i in 1:Tlast_page) { # Loop gennem sider for den nuværende model
-    Tloopurl <- paste0(modellink,i,"&powertype=kw&search_id=1pfsvl8rerg&sort=standard&source=listpage_pagination&ustate=N%2CU")
-    side_progress <- paste0("side: ",i,"/",Tlast_page," for modellen: ",model)
-    print(side_progress)
-    Sys.sleep(runif(1, min = 0.5, max = 2))
-    Trawres <- GET(
-      url = Tloopurl,
-      add_headers(`User-Agent` = UserT)
-    )
-    Trawcontent <- httr::content(Trawres, as = "text", encoding = "UTF-8")
-    Tpage <- read_html(Trawcontent)
-    
-    Tcarlist <- Tpage %>% html_elements("article")
-    
-    for (Tcar in Tcarlist) { #Loop at nuværende side, aka det reele scrape af bil info
-      tryCatch({
-        Tpris <- Tcar %>% html_element(Tpricetag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tname <- Tcar %>% html_element(Tnametag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tmilage <- Tcar %>% html_element(Tmilagetag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tcalender <- Tcar %>% html_element(Tcalendertag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tgas <- Tcar %>% html_element(Tgastag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tspeedometer <- Tcar %>% html_element(Tspeedometertag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tdistance <- Tcar %>% html_element(Tdistancetag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tlightning <- Tcar %>% html_element(Tlightningtag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tleaf <- Tcar %>% html_element(Tleaftag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Tseller <- Tcar %>% html_element(Tsellertag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Trating <- Tcar %>% html_element(Tratingtag) %>% html_text(trim = TRUE) %>% ifelse(is.na(.), "NA", .)
-        Timage <- Tcar %>% html_element(Timagetag) %>% html_attr("src") %>% ifelse(is.na(.), "NA", .)
-        
-        tmpDF <- data.frame(
-          Tpris, Tname, Tmilage, Tcalender, Tgas, Tspeedometer, 
-          Tdistance, Tlightning, Tleaf, Tseller, Trating, Timage, 
-          Sys.time(), stringsAsFactors = FALSE
-        )
-        
-        Tyskebiler <- rbind(Tyskebiler, tmpDF)
-      })
-      error = function(cond) {
-        print(cond)
-      }
-      Tcurrent_row_count <- nrow(Tyskebiler)
-      TLoop <- paste0("Loopet har nu fanget: ",Tcurrent_row_count," tyske biler, klokken: ",format(Sys.time(),"%Y-%m-%d-%H-%M"))
-      print(TLoop)
-    }
-  }
-}
-
-TRDSname <- paste0("TyskWebScrape_",format(Sys.time(), "%Y-%m-%d-%H-%M"),".rds")
-saveRDS(Tyskebiler, TRDSname)
-
-#### 1.3 ####
-#Gem som CSV og selv lav ændringerne
-#Det store arbejder er at systematisk samligne de 2 dataframe, f.eks. anti join, hvilke nye række og hvad er forskellen?
+an_rows <- an_table %>% html_elements("tr")
+an_table_data <- an_rows %>% html_elements("td") %>% html_text(trim = T)
+an_header <- an_table %>% html_elements("th") %>% html_text(trim = T)
+an_header_amount <- as.numeric(length(an_header))
+an_unlist <- unlist(an_table_data)
+Anholt <- as.data.frame(matrix(data = an_unlist, ncol = an_header_amount, byrow = T))
+colnames(Anholt) <- an_header
+Anholt[,2:an_header_amount] <- lapply(Anholt[,2:an_header_amount], function(x) as.numeric(gsub(",",".",x)))
 
 
 
+#### Hc Andersens Boulevard ####
+hc_link = "https://envs2.au.dk/Luftdata/Presentation/table/Copenhagen/HCAB"
+hcrawres <- GET(url = hc_link, add_headers(`User Agent`=UserA))
+print(hcrawres$status_code)
+hc_contant <- httr::content(hcrawres, as = "text", encoding = "UTF-8")
+hc_js <- "https://envs2.au.dk/Luftdata/Presentation/table/MainTable/Copenhagen/HCAB"
+hc_token <- read_html(hc_contant) %>% html_element("input[name=__RequestVerificationToken]") %>% html_attr("value")
+hc_post <- POST(
+  url = hc_js,
+  add_headers(`User Agent`= UserA),
+  body = list(`__RequestVerificationToken` = token))
 
-# Kunne være spændende at se om man kan scrape geo data, og lave et map
-#
-#
-#
-#
-##### lav map over dk i kommune ####
-## https://github.com/sebastianbarfort/mapDK
+hc_table_html <- content(hc_post, as = "text", encoding = "UTF-8")
+hc_table <- read_html(hc_table_html)
 
-#### To SQL ####
-library(DBI)
-library(RMariaDB)
-
-# Hvis i skal bruge hjælp til at opsætte dette, kan i min repo guide: https://github.com/60gCreatine/Skjul_API-KEY_i_RStudio_Git
-# Ellers bare i stedet for password i con skriv jeres password HUSK IKKE AT UPLOADE TIL GIT HVIS I GØR DET!!!!!
-readRenviron(".Renviron")
-password <- paste0(Sys.getenv("password"),'"')
-
-# I workbench lav database med navnet newbilbasen
-# CREATE DATABASE newbilbasen;
-con <- dbConnect(MariaDB(),
-                 db="empl",
-                 host="localhost",
-                 port=3306,
-                 user="root",
-                 password=password)
-bil <- readRDS("bilbasenWebScrape_2024-11-23-22-35.rds")
-dbWriteTable(con,"cars",bil)
-
-
+hc_rows <- hc_table %>% html_elements("tr")
+hc_table_data <- hc_rows %>% html_elements("td") %>% html_text(trim = T)
+hc_header <- hc_table %>% html_elements("th") %>% html_text(trim = T)
+hc_header_amount <- as.numeric(length(hc_header))
+hc_unlist <- unlist(hc_table_data)
+HC_Andersens_Boulevard <- as.data.frame(matrix(data = hc_unlist,ncol = hc_header_amount,byrow = T))
+colnames(HC_Andersens_Boulevard) <- hc_header
+HC_Andersens_Boulevard[,2:hc_header_amount] <- lapply(HC_Andersens_Boulevard[,2:hc_header_amount], function(x) as.numeric(gsub(",",".",x)))
