@@ -74,6 +74,18 @@ RDSname <- paste0(operator,"_", format(Sys.time(), "%Y-%m-%d_%H-%M"), ".rds")
 cat(paste0("Har fundet: ",nrow(df)," rækker! Gemmer dataen i filen: ",RDSname,"\n"))
 saveRDS(df,RDSname)
 
+total_dataset_name <- paste0(operator, "_total.rds")
+
+if (file.exists(total_dataset_name)) {
+  total_data <- readRDS(total_dataset_name)
+  total_data <- rbind(total_data, df)
+} else {
+  total_data <- df
+}
+
+saveRDS(total_data, total_dataset_name)
+cat(paste0("Total dataset updated and saved as: ", total_dataset_name,"med: ", nrow(total_data)," rows\n"))
+
 
 
 
