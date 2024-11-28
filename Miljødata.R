@@ -74,6 +74,15 @@ RDSname <- paste0(operator,"_", format(Sys.time(), "%Y-%m-%d_%H-%M"), ".rds")
 cat(paste0("Har fundet: ",nrow(df)," rækker! Gemmer dataen i filen: ",RDSname,"\n"))
 saveRDS(df,RDSname)
 
+operator_folder <- file.path("data", operator)  
+if (!dir.exists(operator_folder)) {
+  dir.create(operator_folder, recursive = TRUE)  
+}
+
+individual_file_path <- file.path(operator_folder, RDSname)
+saveRDS(df, individual_file_path)
+message("Individuel fil gemt som: ", individual_file_path)
+
 total_dataset_name <- paste0(operator, "_total.rds")
 
 if (file.exists(total_dataset_name)) {
@@ -84,9 +93,7 @@ if (file.exists(total_dataset_name)) {
 }
 
 saveRDS(total_data, total_dataset_name)
-cat(paste0("Total dataset updated and saved as: ", total_dataset_name,"med: ", nrow(total_data)," rows\n"))
-
-
+message("Total dataset opdateret og gemt som: ", total_dataset_name)
 
 
 
